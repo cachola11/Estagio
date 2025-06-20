@@ -324,7 +324,8 @@ if st.session_state["df_resultado"] is not None:
             text=f"Crescimento do Investimento ao Longo do Tempo ({periodicidade})",
             font=dict(size=24, color="#2C3E50"),
             x=0.5,
-            y=0.95
+            y=0.95,
+            xanchor="center"
         ),
         xaxis=dict(
             title=dict(
@@ -464,14 +465,19 @@ if st.session_state["df_resultado"] is not None:
         # Auto-adjust column widths
         for column in ws.columns:
             max_length = 0
-            column_letter = column[0].column_letter
+            # Use header row cell (row 3, index 2) to safely get column letter,
+            # avoiding issues with merged cells in row 1.
+            if not column or len(column) < 3:
+                continue
+            
+            column_letter = column[2].column_letter
             for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
+                if cell.value:
+                    # Find the max length of the string representation of a cell's value
+                    max_length = max(max_length, len(str(cell.value)))
+
+            # Add padding and set column width
+            adjusted_width = (max_length + 2)
             ws.column_dimensions[column_letter].width = adjusted_width
         
         # Save to bytes
