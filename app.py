@@ -2,6 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 # Page configuration
 st.set_page_config(
@@ -95,6 +99,10 @@ taxa_tipo = st.sidebar.radio(
     help="Escolha se a taxa é anual ou por período"
 )
 
+# Initialize session state for interest rate
+if 'taxa_juro' not in st.session_state:
+    st.session_state.taxa_juro = 5.0
+
 if taxa_tipo == "Taxa Anual":
     # Create two columns for the slider and number input
     col1, col2 = st.sidebar.columns([3, 1])
@@ -103,19 +111,25 @@ if taxa_tipo == "Taxa Anual":
             "Taxa de juro anual (%)",
             min_value=0.0,
             max_value=35.0,
-            value=5.0,
+            value=st.session_state.taxa_juro,
             step=0.1,
-            help="Deslize para ajustar a taxa de juro anual esperada"
+            key="slider_taxa_anual",
+            help="Deslize para ajustar a taxa de juro anual esperada",
+            on_change=lambda: setattr(st.session_state, 'taxa_juro', st.session_state.slider_taxa_anual)
         )
     with col2:
         Taxa_Juro = st.number_input(
             "Taxa (%)",
             min_value=0.0,
             max_value=35.0,
-            value=Taxa_Juro,
+            value=st.session_state.taxa_juro,
             step=0.1,
-            help="Introduza a taxa de juro anual com precisão"
+            key="input_taxa_anual",
+            help="Introduza a taxa de juro anual com precisão",
+            on_change=lambda: setattr(st.session_state, 'taxa_juro', st.session_state.input_taxa_anual)
         )
+    # Update session state
+    st.session_state.taxa_juro = Taxa_Juro
     # Convert annual rate to periodic rate
     periodos_ano = periodicidade_info[periodicidade]["periodos_ano"]
     taxa_periodo = ((1 + Taxa_Juro/100) ** (1/periodos_ano) - 1) * 100
@@ -127,19 +141,25 @@ else:
             f"Taxa de juro {periodicidade.lower()} (%)",
             min_value=0.0,
             max_value=35.0,
-            value=5.0,
+            value=st.session_state.taxa_juro,
             step=0.1,
-            help=f"Deslize para ajustar a taxa de juro {periodicidade.lower()}"
+            key="slider_taxa_periodo",
+            help=f"Deslize para ajustar a taxa de juro {periodicidade.lower()}",
+            on_change=lambda: setattr(st.session_state, 'taxa_juro', st.session_state.slider_taxa_periodo)
         )
     with col2:
         Taxa_Juro = st.number_input(
             "Taxa (%)",
             min_value=0.0,
             max_value=35.0,
-            value=Taxa_Juro,
+            value=st.session_state.taxa_juro,
             step=0.1,
-            help=f"Introduza a taxa de juro {periodicidade.lower()} com precisão"
+            key="input_taxa_periodo",
+            help=f"Introduza a taxa de juro {periodicidade.lower()} com precisão",
+            on_change=lambda: setattr(st.session_state, 'taxa_juro', st.session_state.input_taxa_periodo)
         )
+    # Update session state
+    st.session_state.taxa_juro = Taxa_Juro
     # Convert periodic rate to annual rate
     periodos_ano = periodicidade_info[periodicidade]["periodos_ano"]
     taxa_periodo = Taxa_Juro
@@ -409,9 +429,59 @@ if st.session_state["df_resultado"] is not None:
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # Detailed results
+    # Detailed results with download functionality
     st.markdown("### 📋 Detalhes do Investimento")
-    if st.button("Mostrar Tabela Detalhada", key="tabela_btn"):
+    
+    # Create Excel download function
+    def create_excel_download(df, periodicidade):
+        # Create a new workbook and select the active sheet
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Projeção de Investimento"
+        
+        # Add title
+        ws['A1'] = f"Projeção de Investimento - {periodicidade}"
+        ws['A1'].font = Font(size=16, bold=True)
+        ws.merge_cells('A1:G1')
+        ws['A1'].alignment = Alignment(horizontal='center')
+        
+        # Add headers
+        headers = ["Período", "Data", "Saldo Inicial (€)", "Taxa de Juro", "Juros (€)", "Reforço (€)", "Saldo Final (€)"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=3, column=col, value=header)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
+            cell.alignment = Alignment(horizontal='center')
+        
+        # Add data
+        for row_idx, row in enumerate(dataframe_to_rows(df, index=False, header=False), 4):
+            for col_idx, value in enumerate(row, 1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                if col_idx in [3, 5, 6, 7]:  # Currency columns
+                    cell.number_format = '#,##0.00€'
+                cell.alignment = Alignment(horizontal='center')
+        
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        # Save to bytes
+        excel_buffer = io.BytesIO()
+        wb.save(excel_buffer)
+        excel_buffer.seek(0)
+        return excel_buffer
+    
+    # Create download button
+    if st.button("📊 Mostrar Tabela Detalhada", key="tabela_btn"):
         st.dataframe(
             df.style.format({
                 "Saldo Inicial": "€{:.2f}",
@@ -420,6 +490,16 @@ if st.session_state["df_resultado"] is not None:
                 "Saldo Final": "€{:.2f}"
             }).background_gradient(subset=["Saldo Final"], cmap="YlOrRd"),
             use_container_width=True
+        )
+        
+        # Create and offer Excel download
+        excel_buffer = create_excel_download(df, periodicidade)
+        st.download_button(
+            label="📥 Transferir Tabela em Excel",
+            data=excel_buffer.getvalue(),
+            file_name=f"projecao_investimento_{periodicidade.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Clique para transferir a tabela detalhada em formato Excel"
         )
 
 # Footer
